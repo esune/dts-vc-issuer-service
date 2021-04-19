@@ -129,7 +129,7 @@ usage() {
       down - Brings down the services and removes the volumes (storage) and containers.
       rm - Same as down
 
-      provision - Only starts the agent and wallet, registers teh agent on Sovrin Staging Net and accepts the TAA.
+      provision - Only starts the agent and wallet, registers the agent on Sovrin Staging Net and accepts the TAA.
                   Automatically performed when start detects a first/clean run. 
 
 EOF
