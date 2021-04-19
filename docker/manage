@@ -143,7 +143,7 @@ pingAgent(){
   port=${1}
 
   # ping agent using a backchannel-exposed api
-  rtnCd=$(curl -s --write-out '%{http_code}' --output /dev/null http://localhost:${port}/api/doc)
+  rtnCd=$(${CURL_EXE} -s --write-out '%{http_code}' --output /dev/null http://localhost:${port}/api/doc)
   if (( ${rtnCd} == 200 )); then
     return 0
   else
@@ -155,19 +155,16 @@ waitForAgent(){
   (
     # Wait for agent to start ...
     local startTime=${SECONDS}
-    rtnCd=0
     printf "Waiting for agent to start"
     while ! pingAgent ${@}; do
       printf "."
       local duration=$(($SECONDS - $startTime))
       if (( ${duration} >= ${AGENT_TIMEOUT} )); then
         echoRed "\nThe agent failed to start within ${duration} seconds.\n"
-        rtnCd=1
-        break
+        exit 1
       fi
       sleep 1
     done
-    echo ${rtnCd}
   )
 }
 
@@ -181,48 +178,52 @@ registerSovrin() {
     exit 1
   fi
     
-  echo -e "\nRegistering agent on ${ledger} using DID:${AGENT_PUBLIC_DID}, Verkey: ${AGENT_VERKEY}..."
-  REGISTER_DID_RESULT=$(${CURL_EXE} \
+  echo -e "Registering agent on ${ledger} using DID:${AGENT_PUBLIC_DID}, Verkey: ${AGENT_VERKEY}...\n"
+
+  # We need to pre-create the curl command, otherwise the execution could fail
+  regCmd=$(echo "${CURL_EXE} \
       -s \
       -X POST \
-      -H "Content-Type: application/json charset=utf-8" \
-      -d "{\"network\":\"${ledger}\",\"did\":\"${did}\",\"verkey\":\"${verkey}\",\"paymentaddr\":\"\"}" \
-      "https://selfserve.sovrin.org/nym")
+      -H \"Content-Type: application/json charset=utf-8\" \
+      -d \"{\\\"network\\\":\\\"${ledger}\\\",\\\"did\\\":\\\"${did}\\\",\\\"verkey\\\":\\\"${verkey}\\\",\\\"paymentaddr\\\":\\\"\\\"}\" \
+      \"https://selfserve.sovrin.org/nym\"")
+  REGISTER_DID_RESULT=$(eval ${regCmd})
 
   if [[ ! "200" == $(echo $REGISTER_DID_RESULT | ${JQ_EXE} -r '.statusCode') ]]; then
     echoRed "The agent registration failed with the following message: ${REGISTER_DID_RESULT}"
     docker-compose stop
     rm ".env"
-    return 1
+    exit 1
   fi
 }
 
 generateTaaPayload() {
-  TAA=$(${CURL_EXE} \
+  ${CURL_EXE} \
+      -s \
       -X GET \
       -H "X-Api-Key:${AGENT_ADMIN_API_KEY}" \
-      "http://localhost:${AGENT_ADMIN_PORT}/ledger/taa")
-  TAA_TEXT=$(echo $TAA | ${JQ_EXE} '.result.taa_record.text')
-  # TAA_TEXT=$(echo "${TAA_TEXT}" | iconv -t utf-8 | sed 's/"/\\\"/g')
-  TAA_VERSION=$(echo $TAA | ${JQ_EXE} '.result.taa_record.version')
-  echo "{\"mechanism\":\"${SELECTED_MECHANISM}\", \"version\": \"${TAA_VERSION}\", \"text\":\"${TAA_TEXT}\"}" > taa_payload.json
+      "http://localhost:${AGENT_ADMIN_PORT}/ledger/taa" \
+  | ${JQ_EXE} '{ "mechanism":"at_submission", "version": "\(.result.taa_record.version)", "text": "\(.result.taa_record.text)" }' \
+  > taa_payload.json
 }
 
 acceptTAA() {
   generateTaaPayload
 
-  TAA_ACCEPT_REAULT=$(${CURL_EXE} \
+  TAA_ACCEPT_RESULT=$(${CURL_EXE} \
+      -s \
       -X POST \
       -H "X-Api-Key:${AGENT_ADMIN_API_KEY}" \
       -H "Content-Type: application/json charset=utf-8" \
       -d @taa_payload.json \
       "http://localhost:${AGENT_ADMIN_PORT}/ledger/taa/accept")
-  
-  if [[ ${TAA_ACCEPT_REAULT} == "{}" ]]; then
-    echo "TAA accepted successfully"
+
+  if [[ "${TAA_ACCEPT_RESULT}" == "{}" ]]; then
+    echo -e "TAA accepted successfully \n"
     rm ./taa_payload.json
   else
-    echoRed "Failed to accept TAA"
+    echoRed "Failed to accept TAA: ${TAA_ACCEPT_RESULT}"
+    exit 1
   fi
 }
 
@@ -231,7 +232,7 @@ provisionAgent(){
     echo "Generated AGENT_WALLET_SEED=${AGENT_WALLET_SEED}"
     echo "AGENT_WALLET_SEED=${AGENT_WALLET_SEED}" > .env
 
-    echo "Starting agent in read-only mode...\n"
+    echo -e "\nStarting agent in read-only mode...\n"
     export AGENT_READ_ONLY_MODE="true"
     configureEnvironment "$@"
     docker-compose --env-file .env up -d wallet agent
@@ -239,9 +240,9 @@ provisionAgent(){
     echo
     waitForAgent ${AGENT_ADMIN_PORT}
 
-    echo
-    echo "Retrieving agent configuration..."
+    echo -e "\nRetrieving agent configuration..."
     AGENT_PUBLIC_INFO=$(${CURL_EXE} \
+                      -s \
                       -X GET \
                       -H  "accept: application/json" \
                       -H  "X-Api-Key: $AGENT_ADMIN_API_KEY"\
@@ -254,13 +255,12 @@ provisionAgent(){
     echo
     registerSovrin $AGENT_PUBLIC_DID $AGENT_VERKEY
 
-    echo
-    echo "Agent registered successfully, accepting TAA..."
+    echo -e "Agent registered successfully, accepting TAA...\n"
     acceptTAA
 
     unset AGENT_READ_ONLY_MODE
     echo
-    echo "Agent provisioning completed, ready for startup"    
+    echo -e "Agent provisioning completed, ready for startup\n"
 }
 
 build() {
@@ -475,7 +475,6 @@ case "${COMMAND}" in
     isCurlInstalled
 
     if [[ ! -f ".env" ]]; then
-      echo "First/clean start detected, provisioning agent on Sovrin StagingNet..." 
       provisionAgent
     fi
   ;;
@@ -483,18 +482,22 @@ case "${COMMAND}" in
     isJQInstalled
     isCurlInstalled
 
-    if [[ ! -f ".env" ]]; then
-      echo "First/clean start detected, provisioning agent on Sovrin StagingNet..." 
-      provisionAgent
-    fi
-
     if [ -z "$NGROK_AGENT_ENDPOINT" ]; then
       isNgrokInstalled
-      export NGROK_AGENT_ENDPOINT=$(${CURL_EXE} -X GET "http://localhost:4040/api/tunnels" | ${JQ_EXE} -r '.tunnels | map(select(.name | contains("issuer-agent"))) | .[0] | .public_url')
+      export NGROK_AGENT_ENDPOINT=$(${CURL_EXE} \
+            -s \
+            -X GET \
+            "http://localhost:4040/api/tunnels" \
+            | ${JQ_EXE} -r '.tunnels | map(select(.name | contains("issuer-agent"))) | .[0] | .public_url')
     fi
 
     checkNgrokTunnelActive
     echo "The agent endpoint is: ${NGROK_AGENT_ENDPOINT}"
+
+    if [[ ! -f ".env" ]]; then
+      echo "First/clean start detected, provisioning agent on Sovrin StagingNet..." 
+      provisionAgent
+    fi
 
     configureEnvironment "$@"
     # customizeKeycloakConfig
@@ -508,6 +511,9 @@ case "${COMMAND}" in
   rm|down)
     if [ -f ".env" ] ; then
         rm ".env"
+    fi
+    if [ -f "taa_payload.json" ] ; then
+        rm "taa_payload.json"
     fi
     configureEnvironment
     deleteVolumes
