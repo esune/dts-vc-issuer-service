@@ -228,9 +228,11 @@ acceptTAA() {
 }
 
 provisionAgent(){
-    AGENT_WALLET_SEED=$(generateSeed dts-vc-issuer-demo)
-    echo "Generated AGENT_WALLET_SEED=${AGENT_WALLET_SEED}"
-    echo "AGENT_WALLET_SEED=${AGENT_WALLET_SEED}" > .env
+    if [[ ! -f ".env" ]]; then
+      AGENT_WALLET_SEED=$(generateSeed dts-vc-issuer-demo)
+      echo "Generated AGENT_WALLET_SEED=${AGENT_WALLET_SEED}"
+      echo "AGENT_WALLET_SEED=${AGENT_WALLET_SEED}" > .env
+    fi
 
     echo -e "\nStarting agent in read-only mode...\n"
     export AGENT_READ_ONLY_MODE="true"
@@ -474,9 +476,7 @@ case "${COMMAND}" in
     isJQInstalled
     isCurlInstalled
 
-    if [[ ! -f ".env" ]]; then
-      provisionAgent
-    fi
+    provisionAgent
   ;;
   start|start|up)
     isJQInstalled
