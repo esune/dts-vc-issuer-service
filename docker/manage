@@ -242,8 +242,9 @@ configureEnvironment() {
   # immunization api
   export IMMUNIZATION_DATABASE_NAME="dts_immunization_db"
   export IMMUNIZATION_API_PORT=${IMMUNIZATION_API_PORT:-5001}
+  
   # verifier api 
-  export VERIFIER_API_PORT=10000
+  export VERIFIER_API_PORT=${VERIFIER_API_PORT:-10000}
 }
 
 getInputParams() {
