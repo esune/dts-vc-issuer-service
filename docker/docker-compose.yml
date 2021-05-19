@@ -31,6 +31,17 @@ services:
       dotnet watch run --urls=http://+:5000"
     ]
 
+  # ReactJS API Verifier 
+  verifier-api-dev: 
+    image: dts-vc-verifier-api-dev
+    ports: 
+      - ${VERIFIER_API_PORT}:${VERIFIER_API_PORT}
+    networks: 
+      - dts-vc-verifier
+    command: [
+      "npm", "start"
+    ]
+
   # .Net Core API Immunization
   immunization-api-dev:
     image: dts-vc-immunization-api-dev
@@ -183,6 +194,7 @@ services:
 
 networks:
   dts-vc-issuer:
+  dts-vc-verifier:
 
 volumes:
   keycloak-db-data:
